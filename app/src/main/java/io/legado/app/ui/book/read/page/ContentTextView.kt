@@ -23,10 +23,12 @@ import io.legado.app.ui.book.read.page.provider.ChapterProvider
 import io.legado.app.ui.book.read.page.provider.TextPageFactory
 import io.legado.app.ui.widget.dialog.PhotoDialog
 import io.legado.app.utils.activity
+import io.legado.app.utils.dpToPx
 import io.legado.app.utils.getCompatColor
 import io.legado.app.utils.showDialogFragment
 import io.legado.app.utils.toastOnUi
 import java.util.concurrent.Executors
+import kotlin.math.max
 import kotlin.math.min
 
 /**
@@ -271,29 +273,23 @@ class ContentTextView(context: Context, attrs: AttributeSet?) : View(context, at
      * 开始选择符移动
      */
     fun selectStartMove(x: Float, y: Float) {
-        touchRough(x, y) { relativeOffset, textPos, _, textLine, textColumn ->
+        touchRough(x, y) { _, textPos, _, _, _ ->
             if (selectStart.compare(textPos) == 0) {
                 return@touchRough
             }
             if (textPos.compare(selectEnd) <= 0) {
-                selectStart.upData(pos = textPos)
-                upSelectedStart(
-                    if (textPos.columnIndex < textLine.columns.size) textColumn.start else textColumn.end,
-                    textLine.lineBottom + relativeOffset,
-                    textLine.lineTop + relativeOffset
-                )
+                selectStartMoveIndex(textPos)
             } else {
-                reverseStartCursor = true
-                reverseEndCursor = false
-                selectEnd.columnIndex++
-                selectStartMoveIndex(selectEnd)
-                selectEnd.upData(textPos)
-                upSelectedEnd(
-                    if (textPos.columnIndex > -1) textColumn.end else textColumn.start,
-                    textLine.lineBottom + relativeOffset
-                )
+                touchRough(x - 2 * cursorWidth, y) { _, textPos, _, _, _ ->
+                    if (textPos.compare(selectEnd) > 0) {
+                        reverseStartCursor = true
+                        reverseEndCursor = false
+                        selectEnd.columnIndex++
+                        selectStartMoveIndex(selectEnd)
+                        selectEndMoveIndex(textPos)
+                    }
+                }
             }
-            upSelectChars()
         }
     }
 
@@ -301,29 +297,23 @@ class ContentTextView(context: Context, attrs: AttributeSet?) : View(context, at
      * 结束选择符移动
      */
     fun selectEndMove(x: Float, y: Float) {
-        touchRough(x, y) { relativeOffset, textPos, _, textLine, textColumn ->
+        touchRough(x, y) { _, textPos, _, _, _ ->
             if (textPos.compare(selectEnd) == 0) {
                 return@touchRough
             }
             if (textPos.compare(selectStart) >= 0) {
-                selectEnd.upData(textPos)
-                upSelectedEnd(
-                    if (textPos.columnIndex > -1) textColumn.end else textColumn.start,
-                    textLine.lineBottom + relativeOffset
-                )
+                selectEndMoveIndex(textPos)
             } else {
-                reverseEndCursor = true
-                reverseStartCursor = false
-                selectStart.columnIndex--
-                selectEndMoveIndex(selectStart)
-                selectStart.upData(textPos)
-                upSelectedStart(
-                    if (textPos.columnIndex < textLine.columns.size) textColumn.start else textColumn.end,
-                    textLine.lineBottom + relativeOffset,
-                    textLine.lineTop + relativeOffset
-                )
+                touchRough(x + 2 * cursorWidth, y) { _, textPos, _, _, _ ->
+                    if (textPos.compare(selectStart) < 0) {
+                        reverseEndCursor = true
+                        reverseStartCursor = false
+                        selectStart.columnIndex--
+                        selectEndMoveIndex(selectStart)
+                        selectStartMoveIndex(textPos)
+                    }
+                }
             }
-            upSelectChars()
         }
     }
 
@@ -494,7 +484,7 @@ class ContentTextView(context: Context, attrs: AttributeSet?) : View(context, at
     ) {
         selectStart.relativePagePos = relativePagePos
         selectStart.lineIndex = lineIndex
-        selectStart.columnIndex = charIndex
+        selectStart.columnIndex = max(0, charIndex)
         val textLine = relativePage(relativePagePos).getLine(lineIndex)
         val textColumn = textLine.getColumn(charIndex)
         upSelectedStart(
@@ -519,8 +509,8 @@ class ContentTextView(context: Context, attrs: AttributeSet?) : View(context, at
     ) {
         selectEnd.relativePagePos = relativePage
         selectEnd.lineIndex = lineIndex
-        selectEnd.columnIndex = charIndex
         val textLine = relativePage(relativePage).getLine(lineIndex)
+        selectEnd.columnIndex = min(charIndex, textLine.columns.lastIndex)
         val textColumn = textLine.getColumn(charIndex)
         upSelectedEnd(
             if (charIndex > -1) textColumn.end else textColumn.start,
@@ -549,12 +539,7 @@ class ContentTextView(context: Context, attrs: AttributeSet?) : View(context, at
                     if (column is TextColumn) {
                         val compareStart = textPos.compare(selectStart)
                         val compareEnd = textPos.compare(selectEnd)
-                        column.selected = when {
-                            compareStart == 0 -> true
-                            compareEnd == 0 -> true
-                            compareStart > 0 && compareEnd < 0 -> true
-                            else -> false
-                        }
+                        column.selected = compareStart >= 0 && compareEnd <= 0
                         column.isSearchResult =
                             column.selected && callBack.isSelectingSearchResult
                         if (column.isSearchResult) {
@@ -620,28 +605,23 @@ class ContentTextView(context: Context, attrs: AttributeSet?) : View(context, at
                     val compareEnd = textPos.compare(selectEnd)
                     if (column is TextColumn) {
                         when {
-                            compareStart == 0 -> {
-                                if (textPos.columnIndex < textLine.columns.size) {
-                                    builder.append(column.charData)
-                                }
+                            compareStart == -1 -> if (
+                                selectStart.columnIndex == textLine.columns.size
+                                && charIndex == textLine.columns.lastIndex
+                            ) {
+                                builder.append("\n")
+                            }
+
+                            compareEnd == 1 -> if (selectEnd.columnIndex == -1 && charIndex == 0) {
+                                builder.append("\n")
+                            }
+
+                            compareStart >= 0 && compareEnd <= 0 -> {
+                                builder.append(column.charData)
                                 if (
                                     textLine.isParagraphEnd
                                     && charIndex == textLine.columns.lastIndex
                                     && compareEnd != 0
-                                ) {
-                                    builder.append("\n")
-                                }
-                            }
-
-                            compareEnd == 0 -> if (textPos.columnIndex > -1) {
-                                builder.append(column.charData)
-                            }
-
-                            compareStart > 0 && compareEnd < 0 -> {
-                                builder.append(column.charData)
-                                if (
-                                    textLine.isParagraphEnd
-                                    && charIndex == textLine.columns.lastIndex
                                 ) {
                                     builder.append("\n")
                                 }
@@ -719,6 +699,7 @@ class ContentTextView(context: Context, attrs: AttributeSet?) : View(context, at
                 Thread(it, "TextPageRender")
             }
         }
+        private val cursorWidth = 24.dpToPx()
     }
 
     interface CallBack {

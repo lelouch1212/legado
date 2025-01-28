@@ -9,7 +9,11 @@ import io.legado.app.help.http.okHttpClient
 import io.legado.app.help.http.text
 import io.legado.app.model.analyzeRule.AnalyzeUrl
 import io.legado.app.model.analyzeRule.CustomUrl
-import io.legado.app.utils.*
+import io.legado.app.utils.NetworkUtils
+import io.legado.app.utils.findNS
+import io.legado.app.utils.findNSPrefix
+import io.legado.app.utils.printOnDebug
+import io.legado.app.utils.toRequestBody
 import kotlinx.coroutines.Dispatchers.IO
 import kotlinx.coroutines.withContext
 import okhttp3.Interceptor
@@ -180,6 +184,7 @@ open class WebDav(
             //依然是优化支持 caddy 自建的 WebDav ，其目录后缀都为“/”, 所以删除“/”的判定，不然无法获取该目录项
             val href = element.findNS("href", ns)[0].text().replace("+", "%2B")
             val hrefDecode = URLDecoder.decode(href, "UTF-8")
+            val fileName = hrefDecode.removeSuffix("/").substringAfterLast("/")
             val webDavFile: WebDav
             try {
                 val urlName = hrefDecode.ifEmpty {
@@ -187,7 +192,8 @@ open class WebDav(
                 }
                 val displayName = element
                     .findNS("displayname", ns)
-                    .firstOrNull()?.text().orEmpty()
+                    .firstOrNull()?.text()?.takeIf { it.isNotEmpty() }
+                    ?.let { URLDecoder.decode(it.replace("+", "%2B"), "UTF-8") } ?: fileName
                 val contentType = element
                     .findNS("getcontenttype", ns)
                     .firstOrNull()?.text().orEmpty()
@@ -205,7 +211,10 @@ open class WebDav(
                                 .toInstant(ZoneOffset.of("+8")).toEpochMilli()
                         }
                 }.getOrNull() ?: 0
-                val fullURL = NetworkUtils.getAbsoluteURL(baseUrl, hrefDecode)
+                var fullURL = NetworkUtils.getAbsoluteURL(baseUrl, hrefDecode)
+                if (WebDavFile.isDir(contentType, resourceType) && !fullURL.endsWith("/")) {
+                    fullURL += "/"
+                }
                 webDavFile = WebDavFile(
                     fullURL,
                     authorization,

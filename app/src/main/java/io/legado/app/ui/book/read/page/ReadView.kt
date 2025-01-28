@@ -10,7 +10,9 @@ import android.view.MotionEvent
 import android.view.ViewConfiguration
 import android.view.WindowInsets
 import android.widget.FrameLayout
+import io.legado.app.R
 import io.legado.app.constant.PageAnim
+import io.legado.app.data.entities.BookProgress
 import io.legado.app.help.config.AppConfig
 import io.legado.app.help.config.ReadBookConfig
 import io.legado.app.model.ReadAloud
@@ -34,6 +36,7 @@ import io.legado.app.ui.book.read.page.provider.TextPageFactory
 import io.legado.app.utils.activity
 import io.legado.app.utils.canvasrecorder.pools.BitmapPool
 import io.legado.app.utils.invisible
+import io.legado.app.utils.longToastOnUi
 import io.legado.app.utils.showDialogFragment
 import io.legado.app.utils.throttle
 import java.text.BreakIterator
@@ -166,11 +169,15 @@ class ReadView(context: Context, attrs: AttributeSet) :
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val insets =
-                this.rootWindowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.mandatorySystemGestures())
+            val insets = this.rootWindowInsets.getInsetsIgnoringVisibility(
+                WindowInsets.Type.mandatorySystemGestures()
+            )
             val height = activity?.windowManager?.currentWindowMetrics?.bounds?.height()
             if (height != null) {
-                if (event.y > height.minus(insets.bottom)) {
+                if (event.y > height.minus(insets.bottom)
+                    && event.action != MotionEvent.ACTION_UP
+                    && event.action != MotionEvent.ACTION_CANCEL
+                ) {
                     return true
                 }
             }
@@ -254,9 +261,9 @@ class ReadView(context: Context, attrs: AttributeSet) :
         return true
     }
 
-    fun cancelSelect() {
+    fun cancelSelect(clearSearchResult: Boolean = false) {
         if (isTextSelected) {
-            curPage.cancelSelect()
+            curPage.cancelSelect(clearSearchResult)
             isTextSelected = false
         }
     }
@@ -434,6 +441,10 @@ class ReadView(context: Context, attrs: AttributeSet) :
             9 -> callBack.changeReplaceRuleState()
             10 -> callBack.openChapterList()
             11 -> callBack.openSearchActivity(null)
+            12 -> ReadBook.syncProgress(
+                { progress -> callBack.sureNewProgress(progress) },
+                { context.longToastOnUi(context.getString(R.string.upload_book_success)) },
+                { context.longToastOnUi(context.getString(R.string.sync_book_progress_success)) })
         }
     }
 
@@ -622,14 +633,14 @@ class ReadView(context: Context, attrs: AttributeSet) :
     /**
      * 从选择位置开始朗读
      */
-    fun aloudStartSelect() {
+    suspend fun aloudStartSelect() {
         val selectStartPos = curPage.selectStartPos
         var pagePos = selectStartPos.relativePagePos
         val line = selectStartPos.lineIndex
         val column = selectStartPos.columnIndex
         while (pagePos > 0) {
             if (!ReadBook.moveToNextPage()) {
-                ReadBook.moveToNextChapter(false)
+                ReadBook.moveToNextChapterAwait(false)
             }
             pagePos--
         }
@@ -708,7 +719,7 @@ class ReadView(context: Context, attrs: AttributeSet) :
         }
 
     override fun hasNextChapter(): Boolean {
-        return ReadBook.durChapterIndex < ReadBook.chapterSize - 1
+        return ReadBook.durChapterIndex < ReadBook.simulatedChapterSize - 1
     }
 
     override fun hasPrevChapter(): Boolean {
@@ -726,5 +737,6 @@ class ReadView(context: Context, attrs: AttributeSet) :
         fun changeReplaceRuleState()
         fun openSearchActivity(searchWord: String?)
         fun upSystemUiVisibility()
+        fun sureNewProgress(progress: BookProgress)
     }
 }
